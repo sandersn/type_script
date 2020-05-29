@@ -3,13 +3,17 @@ extern crate nom;
 struct Id {
     text: String,
 }
+#[derive(Debug)]
+enum Dec {
+    Var { name: Id, init: Exp },
+}
+#[derive(Debug)]
 enum Exp {
     Number(i32),
     Paren(Box<Exp>),
 }
-fn hello_parser(i: &str) -> nom::IResult<&str, &str> {
-    nom::bytes::complete::tag("hello")(i)
-}
+type Decs = Vec<Dec>;
+
 fn id(i: &str) -> nom::IResult<&str, Id> {
     nom::sequence::pair(
         nom::character::complete::alpha0,
@@ -23,6 +27,28 @@ fn id(i: &str) -> nom::IResult<&str, Id> {
             },
         )
     })
+}
+fn semi(i: &str) -> nom::IResult<&str, (&str, char, &str)> {
+    nom::sequence::tuple((
+        nom::character::complete::multispace0,
+        nom::character::complete::one_of(";"),
+        nom::character::complete::multispace0,
+    ))(i)
+}
+fn decs(i: &str) -> nom::IResult<&str, Decs> {
+    nom::sequence::terminated(nom::multi::separated_list(semi, var), semi)(i)
+}
+fn var(i: &str) -> nom::IResult<&str, Dec> {
+    nom::sequence::tuple((
+        nom::bytes::complete::tag("var"),
+        nom::character::complete::multispace1,
+        id,
+        nom::character::complete::multispace0,
+        nom::bytes::complete::tag(":="),
+        nom::character::complete::multispace0,
+        exp,
+    ))(i)
+    .map(|(rest, (_, _, name, _, _, _, init))| (rest, Dec::Var { name, init }))
 }
 fn expnum(i: &str) -> nom::IResult<&str, Exp> {
     match nom::character::complete::digit1(i) {
@@ -51,23 +77,17 @@ fn exp(i: &str) -> nom::IResult<&str, Exp> {
     nom::branch::alt((expnum, expparen))(i)
 }
 fn main() {
-    println!("{:?}", hello_parser("hello"));
-    println!("{:?}", hello_parser("hello world"));
-    println!("{:?}", hello_parser("goobye hello again"));
+    println!("{:?}", decs("var i := 12; var j := 14;"));
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::decs;
     use crate::exp;
-    use crate::hello_parser;
     use crate::id;
+    use crate::var;
     use crate::Exp::Number;
     use crate::Exp::Paren;
-    #[test]
-    fn it_works() {
-        assert_eq!(hello_parser("hello").unwrap(), ("", "hello"));
-        assert_eq!(hello_parser("hello world").unwrap(), (" world", "hello"))
-    }
     #[test]
     fn id_basic() {
         let (rest, res) = id("ab1m1").unwrap();
@@ -87,12 +107,30 @@ mod tests {
     fn exp_paren() {
         let (rest, res) = exp("(123)").unwrap();
         assert_eq!(rest, "");
-        match res {
-            Number(_) => panic!("Didn't expect a number here"),
-            Paren(e) => match *e {
-                Number(n) => assert_eq!(n, 123),
-                Paren(_) => panic!("Didn't expect a paren here"),
-            },
-        }
+        assert_eq!(format!("{:?}", res), "Paren(Number(123))");
+    }
+    #[test]
+    fn var_simple() {
+        let (rest, res) = var("var x := 1001").unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(
+            format!("{:?}", res),
+            "Var { name: Id { text: \"x\" }, init: Number(1001) }"
+        )
+    }
+    #[test]
+    fn decs_single() {
+        let (rest, res) = decs("var x := 1001;").unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(
+            format!("{:?}", res),
+            "[Var { name: Id { text: \"x\" }, init: Number(1001) }]"
+        )
+    }
+    #[test]
+    fn decs_multi() {
+        let (rest, res) = decs("var x := 1001; var y := 10;").unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(format!("{:?}", res), "[Var { name: Id { text: \"x\" }, init: Number(1001) }, Var { name: Id { text: \"y\" }, init: Number(10) }]")
     }
 }
